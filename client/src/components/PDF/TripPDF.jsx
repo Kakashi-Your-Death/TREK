@@ -193,7 +193,7 @@ export async function downloadTripPDF({ trip, days, places, assignments, categor
 <head>
 <meta charset="UTF-8">
 <base href="${window.location.origin}/">
-<title>${escHtml(trip?.name || tr('pdf.travelPlan'))}</title>
+<title>${escHtml(trip?.title || tr('pdf.travelPlan'))}</title>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -326,7 +326,7 @@ export async function downloadTripPDF({ trip, days, places, assignments, categor
       ? `<div class="cover-circle"><img src="${escHtml(coverImg)}" /></div>`
       : `<div class="cover-circle-ph"></div>`}
     <div class="cover-label">${escHtml(tr('pdf.travelPlan'))}</div>
-    <div class="cover-title">${escHtml(trip?.name || 'Meine Reise')}</div>
+    <div class="cover-title">${escHtml(trip?.title || 'Meine Reise')}</div>
     ${trip?.description ? `<div class="cover-desc">${escHtml(trip.description)}</div>` : ''}
     ${range ? `<div class="cover-dates">${range}</div>` : ''}
     <div class="cover-line"></div>
@@ -368,7 +368,7 @@ ${daysHtml}
   const header = document.createElement('div')
   header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--border-primary);flex-shrink:0;'
   header.innerHTML = `
-    <span style="font-size:13px;font-weight:600;color:var(--text-primary)">${escHtml(trip?.name || tr('pdf.travelPlan'))}</span>
+    <span style="font-size:13px;font-weight:600;color:var(--text-primary)">${escHtml(trip?.title || tr('pdf.travelPlan'))}</span>
     <div style="display:flex;align-items:center;gap:8px">
       <button id="pdf-print-btn" style="display:flex;align-items:center;gap:5px;font-size:12px;font-weight:500;color:var(--text-muted);background:none;border:none;cursor:pointer;padding:4px 8px;border-radius:6px;font-family:inherit">${tr('pdf.saveAsPdf')}</button>
       <button id="pdf-close-btn" style="background:none;border:none;cursor:pointer;color:var(--text-faint);display:flex;padding:4px;border-radius:6px">
