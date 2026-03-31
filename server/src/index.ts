@@ -9,6 +9,7 @@ import fs from 'fs';
 
 const app = express();
 const DEBUG = String(process.env.DEBUG || 'false').toLowerCase() === 'true';
+const LOG_LVL = (process.env.LOG_LEVEL || 'info').toLowerCase();
 
 // Trust first proxy (nginx/Docker) for correct req.ip
 if (process.env.NODE_ENV === 'production' || process.env.TRUST_PROXY) {
@@ -29,21 +30,18 @@ const tmpDir = path.join(__dirname, '../data/tmp');
 
 // Middleware
 const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',')
+  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean)
   : null;
 
 let corsOrigin: cors.CorsOptions['origin'];
 if (allowedOrigins) {
-  // Explicit whitelist from env var
   corsOrigin = (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
     if (!origin || allowedOrigins.includes(origin)) callback(null, true);
     else callback(new Error('Not allowed by CORS'));
   };
 } else if (process.env.NODE_ENV === 'production') {
-  // Production: same-origin only (Express serves the static client)
   corsOrigin = false;
 } else {
-  // Development: allow all origins (needed for Vite dev server)
   corsOrigin = true;
 }
 
@@ -92,30 +90,38 @@ app.use(express.urlencoded({ extended: true }));
 
 app.use(enforceGlobalMfaPolicy);
 
-if (DEBUG) {
+{
+  const { logInfo: _logInfo, logDebug: _logDebug, logWarn: _logWarn, logError: _logError } = require('./services/auditLog');
+  const SENSITIVE_KEYS = new Set(['password', 'new_password', 'current_password', 'token', 'jwt', 'authorization', 'cookie', 'client_secret', 'mfa_token', 'code', 'smtp_pass']);
+  const _redact = (value: unknown): unknown => {
+    if (!value || typeof value !== 'object') return value;
+    if (Array.isArray(value)) return value.map(_redact);
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = SENSITIVE_KEYS.has(k.toLowerCase()) ? '[REDACTED]' : _redact(v);
+    }
+    return out;
+  };
+
   app.use((req: Request, res: Response, next: NextFunction) => {
+    if (req.path === '/api/health') return next();
+
     const startedAt = Date.now();
-    const requestId = Math.random().toString(36).slice(2, 10);
-    const redact = (value: unknown): unknown => {
-      if (!value || typeof value !== 'object') return value;
-      if (Array.isArray(value)) return value.map(redact);
-      const hidden = new Set(['password', 'token', 'jwt', 'authorization', 'cookie', 'client_secret', 'mfa_token', 'code']);
-      const out: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-        out[k] = hidden.has(k.toLowerCase()) ? '[REDACTED]' : redact(v);
-      }
-      return out;
-    };
-
-    const safeQuery = redact(req.query);
-    const safeBody = redact(req.body);
-    console.log(`[DEBUG][REQ ${requestId}] ${req.method} ${req.originalUrl} ip=${req.ip} query=${JSON.stringify(safeQuery)} body=${JSON.stringify(safeBody)}`);
-
     res.on('finish', () => {
-      const elapsedMs = Date.now() - startedAt;
-      console.log(`[DEBUG][RES ${requestId}] ${req.method} ${req.originalUrl} status=${res.statusCode} elapsed_ms=${elapsedMs}`);
-    });
+      const ms = Date.now() - startedAt;
 
+      if (res.statusCode >= 500) {
+        _logError(`${req.method} ${req.path} ${res.statusCode} ${ms}ms ip=${req.ip}`);
+      } else if (res.statusCode === 401 || res.statusCode === 403) {
+        _logDebug(`${req.method} ${req.path} ${res.statusCode} ${ms}ms ip=${req.ip}`);
+      } else if (res.statusCode >= 400) {
+        _logWarn(`${req.method} ${req.path} ${res.statusCode} ${ms}ms ip=${req.ip}`);
+      }
+
+      const q = Object.keys(req.query).length ? ` query=${JSON.stringify(_redact(req.query))}` : '';
+      const b = req.body && Object.keys(req.body).length ? ` body=${JSON.stringify(_redact(req.body))}` : '';
+      _logDebug(`${req.method} ${req.path} ${res.statusCode} ${ms}ms ip=${req.ip}${q}${b}`);
+    });
     next();
   });
 }
@@ -245,17 +251,32 @@ import * as scheduler from './scheduler';
 
 const PORT = process.env.PORT || 3001;
 const server = app.listen(PORT, () => {
-  console.log(`TREK API running on port ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`Debug logs: ${DEBUG ? 'ENABLED' : 'disabled'}`);
+  const { logInfo: sLogInfo, logWarn: sLogWarn } = require('./services/auditLog');
+  const tz = process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  const origins = process.env.ALLOWED_ORIGINS || '(same-origin)';
+  const banner = [
+    '──────────────────────────────────────',
+    '  TREK API started',
+    `  Port:        ${PORT}`,
+    `  Environment: ${process.env.NODE_ENV || 'development'}`,
+    `  Timezone:    ${tz}`,
+    `  Origins:     ${origins}`,
+    `  Log level:   ${LOG_LVL}`,
+    `  Log file:    /app/data/logs/trek.log`,
+    `  PID:         ${process.pid}`,
+    `  User:        uid=${process.getuid?.()} gid=${process.getgid?.()}`,
+    '──────────────────────────────────────',
+  ];
+  banner.forEach(l => console.log(l));
   if (JWT_SECRET_IS_GENERATED) {
-    console.warn('[SECURITY WARNING] JWT_SECRET was auto-generated. Sessions will not persist across restarts. Set JWT_SECRET env var for production use.');
+    sLogWarn('[SECURITY WARNING] JWT_SECRET was auto-generated. Sessions will not persist across restarts. Set JWT_SECRET env var for production use.');
   }
-  if (process.env.DEMO_MODE === 'true') console.log('Demo mode: ENABLED');
+  if (process.env.DEMO_MODE === 'true') sLogInfo('Demo mode: ENABLED');
   if (process.env.DEMO_MODE === 'true' && process.env.NODE_ENV === 'production') {
-    console.warn('[SECURITY WARNING] DEMO_MODE is enabled in production! Demo credentials are publicly exposed.');
+    sLogWarn('SECURITY WARNING: DEMO_MODE is enabled in production!');
   }
   scheduler.start();
+  scheduler.startTripReminders();
   scheduler.startDemoReset();
   import('./websocket').then(({ setupWebSocket }) => {
     setupWebSocket(server);
@@ -264,19 +285,19 @@ const server = app.listen(PORT, () => {
 
 // Graceful shutdown
 function shutdown(signal: string): void {
-  console.log(`\n${signal} received — shutting down gracefully...`);
+  const { logInfo: sLogInfo, logError: sLogError } = require('./services/auditLog');
+  sLogInfo(`${signal} received — shutting down gracefully...`);
   scheduler.stop();
   closeMcpSessions();
   server.close(() => {
-    console.log('HTTP server closed');
+    sLogInfo('HTTP server closed');
     const { closeDb } = require('./db/database');
     closeDb();
-    console.log('Shutdown complete');
+    sLogInfo('Shutdown complete');
     process.exit(0);
   });
-  // Force exit after 10s if connections don't close
   setTimeout(() => {
-    console.error('Forced shutdown after timeout');
+    sLogError('Forced shutdown after timeout');
     process.exit(1);
   }, 10000);
 }

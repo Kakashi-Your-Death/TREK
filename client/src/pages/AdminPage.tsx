@@ -122,7 +122,7 @@ export default function AdminPage(): React.ReactElement {
   const [updating, setUpdating] = useState<boolean>(false)
   const [updateResult, setUpdateResult] = useState<'success' | 'error' | null>(null)
 
-  const { user: currentUser, updateApiKeys, setAppRequireMfa } = useAuthStore()
+  const { user: currentUser, updateApiKeys, setAppRequireMfa, setTripRemindersEnabled } = useAuthStore()
   const navigate = useNavigate()
   const toast = useToast()
 
@@ -974,64 +974,182 @@ export default function AdminPage(): React.ReactElement {
                   </button>
                 </div>
               </div>
-              {/* SMTP / Notifications */}
+              {/* Notifications — exclusive channel selector */}
               <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
                 <div className="px-6 py-4 border-b border-slate-100">
-                  <h2 className="font-semibold text-slate-900">{t('admin.smtp.title')}</h2>
-                  <p className="text-xs text-slate-400 mt-1">{t('admin.smtp.hint')}</p>
+                  <h2 className="font-semibold text-slate-900">{t('admin.notifications.title')}</h2>
+                  <p className="text-xs text-slate-400 mt-1">{t('admin.notifications.hint')}</p>
                 </div>
-                <div className="p-6 space-y-3">
-                  {smtpLoaded && [
-                    { key: 'smtp_host', label: 'SMTP Host', placeholder: 'mail.example.com' },
-                    { key: 'smtp_port', label: 'SMTP Port', placeholder: '587' },
-                    { key: 'smtp_user', label: 'SMTP User', placeholder: 'trek@example.com' },
-                    { key: 'smtp_pass', label: 'SMTP Password', placeholder: '••••••••', type: 'password' },
-                    { key: 'smtp_from', label: 'From Address', placeholder: 'trek@example.com' },
-                    { key: 'notification_webhook_url', label: 'Webhook URL (optional)', placeholder: 'https://discord.com/api/webhooks/...' },
-                    { key: 'app_url', label: 'App URL (for email links)', placeholder: 'https://trek.example.com' },
-                  ].map(field => (
-                    <div key={field.key}>
-                      <label className="block text-xs font-medium text-slate-500 mb-1">{field.label}</label>
-                      <input
-                        type={field.type || 'text'}
-                        value={smtpValues[field.key] || ''}
-                        onChange={e => setSmtpValues(prev => ({ ...prev, [field.key]: e.target.value }))}
-                        placeholder={field.placeholder}
-                        onBlur={e => { if (e.target.value !== '') authApi.updateAppSettings({ [field.key]: e.target.value }).then(() => toast.success(t('common.saved'))).catch(() => {}) }}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 focus:border-transparent"
-                      />
-                    </div>
-                  ))}
-                  {/* Skip TLS toggle */}
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 0' }}>
-                    <div>
-                      <span className="text-xs font-medium text-slate-500">Skip TLS certificate check</span>
-                      <p className="text-[10px] text-slate-400 mt-0.5">Enable for self-signed certificates on local mail servers</p>
-                    </div>
-                    <button onClick={async () => {
-                      const newVal = smtpValues.smtp_skip_tls_verify === 'true' ? 'false' : 'true'
-                      setSmtpValues(prev => ({ ...prev, smtp_skip_tls_verify: newVal }))
-                      await authApi.updateAppSettings({ smtp_skip_tls_verify: newVal }).catch(() => {})
-                    }}
-                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${smtpValues.smtp_skip_tls_verify === 'true' ? 'bg-slate-900' : 'bg-slate-300'}`}>
-                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${smtpValues.smtp_skip_tls_verify === 'true' ? 'translate-x-6' : 'translate-x-1'}`} />
-                    </button>
+                <div className="p-6 space-y-4">
+                  {/* Channel selector */}
+                  <div className="flex gap-2">
+                    {(['none', 'email', 'webhook'] as const).map(ch => {
+                      const active = (smtpValues.notification_channel || 'none') === ch
+                      const labels: Record<string, string> = { none: t('admin.notifications.none'), email: t('admin.notifications.email'), webhook: t('admin.notifications.webhook') }
+                      return (
+                        <button
+                          key={ch}
+                          onClick={() => setSmtpValues(prev => ({ ...prev, notification_channel: ch }))}
+                          className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors border ${active ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}
+                        >
+                          {labels[ch]}
+                        </button>
+                      )
+                    })}
                   </div>
-                  <button
-                    onClick={async () => {
-                      for (const k of ['smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass', 'smtp_from']) {
-                        if (smtpValues[k]) await authApi.updateAppSettings({ [k]: smtpValues[k] }).catch(() => {})
-                      }
-                      try {
-                        const result = await notificationsApi.testSmtp()
-                        if (result.success) toast.success(t('admin.smtp.testSuccess'))
-                        else toast.error(result.error || t('admin.smtp.testFailed'))
-                      } catch { toast.error(t('admin.smtp.testFailed')) }
-                    }}
-                    className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 transition-colors"
-                  >
-                    {t('admin.smtp.testButton')}
-                  </button>
+
+                  {/* Notification event toggles — shown when any channel is active */}
+                  {(smtpValues.notification_channel || 'none') !== 'none' && (() => {
+                    const ch = smtpValues.notification_channel || 'none'
+                    const configValid = ch === 'email' ? !!(smtpValues.smtp_host?.trim()) : ch === 'webhook' ? !!(smtpValues.notification_webhook_url?.trim()) : false
+                    return (
+                    <div className={`space-y-2 pt-2 border-t border-slate-100 ${!configValid ? 'opacity-50 pointer-events-none' : ''}`}>
+                      <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">{t('admin.notifications.events')}</p>
+                      {!configValid && (
+                        <p className="text-[10px] text-amber-600 mb-3">{t('admin.notifications.configureFirst')}</p>
+                      )}
+                      <p className="text-[10px] text-slate-400 mb-3">{t('admin.notifications.eventsHint')}</p>
+                      {[
+                        { key: 'notify_trip_invite', label: t('settings.notifyTripInvite') },
+                        { key: 'notify_booking_change', label: t('settings.notifyBookingChange') },
+                        { key: 'notify_trip_reminder', label: t('settings.notifyTripReminder') },
+                        { key: 'notify_vacay_invite', label: t('settings.notifyVacayInvite') },
+                        { key: 'notify_photos_shared', label: t('settings.notifyPhotosShared') },
+                        { key: 'notify_collab_message', label: t('settings.notifyCollabMessage') },
+                        { key: 'notify_packing_tagged', label: t('settings.notifyPackingTagged') },
+                      ].map(opt => {
+                        const isOn = (smtpValues[opt.key] ?? 'true') !== 'false'
+                        return (
+                          <div key={opt.key} className="flex items-center justify-between py-1">
+                            <span className="text-sm text-slate-700">{opt.label}</span>
+                            <button
+                              onClick={() => {
+                                const newVal = isOn ? 'false' : 'true'
+                                setSmtpValues(prev => ({ ...prev, [opt.key]: newVal }))
+                              }}
+                              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${isOn ? 'bg-slate-900' : 'bg-slate-300'}`}
+                            >
+                              <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${isOn ? 'translate-x-6' : 'translate-x-1'}`} />
+                            </button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                    )
+                  })()}
+
+                  {/* Email (SMTP) settings — shown when email channel is active */}
+                  {(smtpValues.notification_channel || 'none') === 'email' && (
+                    <div className="space-y-3 pt-2 border-t border-slate-100">
+                      <p className="text-xs text-slate-400">{t('admin.smtp.hint')}</p>
+                      {smtpLoaded && [
+                        { key: 'smtp_host', label: 'SMTP Host', placeholder: 'mail.example.com' },
+                        { key: 'smtp_port', label: 'SMTP Port', placeholder: '587' },
+                        { key: 'smtp_user', label: 'SMTP User', placeholder: 'trek@example.com' },
+                        { key: 'smtp_pass', label: 'SMTP Password', placeholder: '••••••••', type: 'password' },
+                        { key: 'smtp_from', label: 'From Address', placeholder: 'trek@example.com' },
+                      ].map(field => (
+                        <div key={field.key}>
+                          <label className="block text-xs font-medium text-slate-500 mb-1">{field.label}</label>
+                          <input
+                            type={field.type || 'text'}
+                            value={smtpValues[field.key] || ''}
+                            onChange={e => setSmtpValues(prev => ({ ...prev, [field.key]: e.target.value }))}
+                            placeholder={field.placeholder}
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 focus:border-transparent"
+                          />
+                        </div>
+                      ))}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 0' }}>
+                        <div>
+                          <span className="text-xs font-medium text-slate-500">Skip TLS certificate check</span>
+                          <p className="text-[10px] text-slate-400 mt-0.5">Enable for self-signed certificates on local mail servers</p>
+                        </div>
+                        <button onClick={() => {
+                          const newVal = smtpValues.smtp_skip_tls_verify === 'true' ? 'false' : 'true'
+                          setSmtpValues(prev => ({ ...prev, smtp_skip_tls_verify: newVal }))
+                        }}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${smtpValues.smtp_skip_tls_verify === 'true' ? 'bg-slate-900' : 'bg-slate-300'}`}>
+                          <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${smtpValues.smtp_skip_tls_verify === 'true' ? 'translate-x-6' : 'translate-x-1'}`} />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Webhook settings — shown when webhook channel is active */}
+                  {(smtpValues.notification_channel || 'none') === 'webhook' && (
+                    <div className="space-y-3 pt-2 border-t border-slate-100">
+                      <p className="text-xs text-slate-400">{t('admin.webhook.hint')}</p>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-500 mb-1">Webhook URL</label>
+                        <input
+                          type="text"
+                          value={smtpValues.notification_webhook_url || ''}
+                          onChange={e => setSmtpValues(prev => ({ ...prev, notification_webhook_url: e.target.value }))}
+                          placeholder="https://discord.com/api/webhooks/..."
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-slate-400 focus:border-transparent"
+                        />
+                        <p className="text-[10px] text-slate-400 mt-1">TREK will POST JSON with event, title, body, and timestamp to this URL.</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Save + Test buttons */}
+                  <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+                    <button
+                      onClick={async () => {
+                        const notifKeys = ['notification_channel', 'notification_webhook_url', 'smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass', 'smtp_from', 'smtp_skip_tls_verify', 'notify_trip_invite', 'notify_booking_change', 'notify_trip_reminder', 'notify_vacay_invite', 'notify_photos_shared', 'notify_collab_message', 'notify_packing_tagged']
+                        const payload: Record<string, string> = {}
+                        for (const k of notifKeys) { if (smtpValues[k] !== undefined) payload[k] = smtpValues[k] }
+                        try {
+                          await authApi.updateAppSettings(payload)
+                          toast.success(t('admin.notifications.saved'))
+                          authApi.getAppConfig().then((c: { trip_reminders_enabled?: boolean }) => {
+                            if (c?.trip_reminders_enabled !== undefined) setTripRemindersEnabled(c.trip_reminders_enabled)
+                          }).catch(() => {})
+                        } catch { toast.error(t('common.error')) }
+                      }}
+                      className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 transition-colors"
+                    >
+                      <Save className="w-4 h-4" />
+                      {t('common.save')}
+                    </button>
+                    {(smtpValues.notification_channel || 'none') === 'email' && (
+                      <button
+                        onClick={async () => {
+                          const smtpKeys = ['smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass', 'smtp_from', 'smtp_skip_tls_verify']
+                          const payload: Record<string, string> = {}
+                          for (const k of smtpKeys) { if (smtpValues[k]) payload[k] = smtpValues[k] }
+                          await authApi.updateAppSettings(payload).catch(() => {})
+                          try {
+                            const result = await notificationsApi.testSmtp()
+                            if (result.success) toast.success(t('admin.smtp.testSuccess'))
+                            else toast.error(result.error || t('admin.smtp.testFailed'))
+                          } catch { toast.error(t('admin.smtp.testFailed')) }
+                        }}
+                        className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors"
+                      >
+                        {t('admin.smtp.testButton')}
+                      </button>
+                    )}
+                    {(smtpValues.notification_channel || 'none') === 'webhook' && (
+                      <button
+                        onClick={async () => {
+                          if (smtpValues.notification_webhook_url) {
+                            await authApi.updateAppSettings({ notification_webhook_url: smtpValues.notification_webhook_url }).catch(() => {})
+                          }
+                          try {
+                            const result = await notificationsApi.testWebhook()
+                            if (result.success) toast.success(t('admin.notifications.testWebhookSuccess'))
+                            else toast.error(result.error || t('admin.notifications.testWebhookFailed'))
+                          } catch { toast.error(t('admin.notifications.testWebhookFailed')) }
+                        }}
+                        className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors"
+                      >
+                        {t('admin.notifications.testWebhook')}
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
@@ -1039,7 +1157,7 @@ export default function AdminPage(): React.ReactElement {
 
           {activeTab === 'backup' && <BackupPanel />}
 
-          {activeTab === 'audit' && <AuditLogPanel />}
+          {activeTab === 'audit' && <AuditLogPanel serverTimezone={serverTimezone} />}
 
           {activeTab === 'mcp-tokens' && <AdminMcpTokensPanel />}
 

@@ -7,7 +7,7 @@ import fs from 'fs';
 import { db } from '../db/database';
 import { authenticate, adminOnly } from '../middleware/auth';
 import { AuthRequest, User, Addon } from '../types';
-import { writeAudit, getClientIp } from '../services/auditLog';
+import { writeAudit, getClientIp, logInfo } from '../services/auditLog';
 import { revokeUserSessions } from '../mcp';
 
 const router = express.Router();
@@ -122,8 +122,9 @@ router.put('/users/:id', (req: Request, res: Response) => {
     action: 'admin.user_update',
     resource: String(req.params.id),
     ip: getClientIp(req),
-    details: { fields: changed },
+    details: { targetUser: user.email, fields: changed },
   });
+  logInfo(`Admin ${authReq.user.email} edited user ${user.email} (fields: ${changed.join(', ')})`);
   res.json({ user: updated });
 });
 
@@ -133,8 +134,8 @@ router.delete('/users/:id', (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Cannot delete own account' });
   }
 
-  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(req.params.id);
-  if (!user) return res.status(404).json({ error: 'User not found' });
+  const userToDel = db.prepare('SELECT id, email FROM users WHERE id = ?').get(req.params.id) as { id: number; email: string } | undefined;
+  if (!userToDel) return res.status(404).json({ error: 'User not found' });
 
   db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
   writeAudit({
@@ -142,7 +143,9 @@ router.delete('/users/:id', (req: Request, res: Response) => {
     action: 'admin.user_delete',
     resource: String(req.params.id),
     ip: getClientIp(req),
+    details: { targetUser: userToDel.email },
   });
+  logInfo(`Admin ${authReq.user.email} deleted user ${userToDel.email}`);
   res.json({ success: true });
 });
 
@@ -189,7 +192,8 @@ router.get('/audit-log', (req: Request, res: Response) => {
           details = { _parse_error: true };
         }
       }
-      return { ...r, details };
+      const created_at = r.created_at && !r.created_at.endsWith('Z') ? r.created_at.replace(' ', 'T') + 'Z' : r.created_at;
+      return { ...r, created_at, details };
     }),
     total,
     limit,

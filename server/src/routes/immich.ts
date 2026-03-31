@@ -186,7 +186,7 @@ router.post('/trips/:tripId/photos', authenticate, (req: Request, res: Response)
   if (shared && added > 0) {
     import('../services/notifications').then(({ notifyTripMembers }) => {
       const tripInfo = db.prepare('SELECT title FROM trips WHERE id = ?').get(tripId) as { title: string } | undefined;
-      notifyTripMembers(Number(tripId), authReq.user.id, 'photos_shared', { trip: tripInfo?.title || 'Untitled', actor: authReq.user.username, count: String(added) }).catch(() => {});
+      notifyTripMembers(Number(tripId), authReq.user.id, 'photos_shared', { trip: tripInfo?.title || 'Untitled', actor: authReq.user.email, count: String(added) }).catch(() => {});
     });
   }
 });

@@ -9,6 +9,7 @@ import { Plane, Eye, EyeOff, Mail, Lock, MapPin, Calendar, Package, User, Globe,
 interface AppConfig {
   has_users: boolean
   allow_registration: boolean
+  setup_complete: boolean
   demo_mode: boolean
   oidc_configured: boolean
   oidc_display_name?: string
@@ -28,7 +29,7 @@ export default function LoginPage(): React.ReactElement {
   const [inviteToken, setInviteToken] = useState<string>('')
   const [inviteValid, setInviteValid] = useState<boolean>(false)
 
-  const { login, register, demoLogin, completeMfaLogin } = useAuthStore()
+  const { login, register, demoLogin, completeMfaLogin, loadUser } = useAuthStore()
   const { setLanguageLocal } = useSettingsStore()
   const navigate = useNavigate()
 
@@ -110,19 +111,39 @@ export default function LoginPage(): React.ReactElement {
   const [mfaStep, setMfaStep] = useState(false)
   const [mfaToken, setMfaToken] = useState('')
   const [mfaCode, setMfaCode] = useState('')
+  const [passwordChangeStep, setPasswordChangeStep] = useState(false)
+  const [savedLoginPassword, setSavedLoginPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>): Promise<void> => {
     e.preventDefault()
     setError('')
     setIsLoading(true)
     try {
+      if (passwordChangeStep) {
+        if (!newPassword) { setError(t('settings.passwordRequired')); setIsLoading(false); return }
+        if (newPassword.length < 8) { setError(t('settings.passwordTooShort')); setIsLoading(false); return }
+        if (newPassword !== confirmPassword) { setError(t('settings.passwordMismatch')); setIsLoading(false); return }
+        await authApi.changePassword({ current_password: savedLoginPassword, new_password: newPassword })
+        await loadUser({ silent: true })
+        setShowTakeoff(true)
+        setTimeout(() => navigate('/dashboard'), 2600)
+        return
+      }
       if (mode === 'login' && mfaStep) {
         if (!mfaCode.trim()) {
           setError(t('login.mfaCodeRequired'))
           setIsLoading(false)
           return
         }
-        await completeMfaLogin(mfaToken, mfaCode)
+        const mfaResult = await completeMfaLogin(mfaToken, mfaCode)
+        if ('user' in mfaResult && mfaResult.user?.must_change_password) {
+          setSavedLoginPassword(password)
+          setPasswordChangeStep(true)
+          setIsLoading(false)
+          return
+        }
         setShowTakeoff(true)
         setTimeout(() => navigate('/dashboard'), 2600)
         return
@@ -140,6 +161,12 @@ export default function LoginPage(): React.ReactElement {
           setIsLoading(false)
           return
         }
+        if ('user' in result && result.user?.must_change_password) {
+          setSavedLoginPassword(password)
+          setPasswordChangeStep(true)
+          setIsLoading(false)
+          return
+        }
       }
       setShowTakeoff(true)
       setTimeout(() => navigate('/dashboard'), 2600)
@@ -149,7 +176,7 @@ export default function LoginPage(): React.ReactElement {
     }
   }
 
-  const showRegisterOption = (appConfig?.allow_registration || !appConfig?.has_users || inviteValid) && !appConfig?.oidc_only_mode
+  const showRegisterOption = (appConfig?.allow_registration || !appConfig?.has_users || inviteValid) && !appConfig?.oidc_only_mode && (appConfig?.setup_complete !== false || !appConfig?.has_users)
 
   // In OIDC-only mode, show a minimal page that redirects directly to the IdP
   const oidcOnly = appConfig?.oidc_only_mode && appConfig?.oidc_configured
@@ -516,18 +543,22 @@ export default function LoginPage(): React.ReactElement {
             ) : (
             <>
             <h2 style={{ margin: '0 0 4px', fontSize: 22, fontWeight: 800, color: '#111827' }}>
-              {mode === 'login' && mfaStep
-                ? t('login.mfaTitle')
-                : mode === 'register'
-                  ? (!appConfig?.has_users ? t('login.createAdmin') : t('login.createAccount'))
-                  : t('login.title')}
+              {passwordChangeStep
+                ? t('login.setNewPassword')
+                : mode === 'login' && mfaStep
+                  ? t('login.mfaTitle')
+                  : mode === 'register'
+                    ? (!appConfig?.has_users ? t('login.createAdmin') : t('login.createAccount'))
+                    : t('login.title')}
             </h2>
             <p style={{ margin: '0 0 28px', fontSize: 13.5, color: '#9ca3af' }}>
-              {mode === 'login' && mfaStep
-                ? t('login.mfaSubtitle')
-                : mode === 'register'
-                  ? (!appConfig?.has_users ? t('login.createAdminHint') : t('login.createAccountHint'))
-                  : t('login.subtitle')}
+              {passwordChangeStep
+                ? t('login.setNewPasswordHint')
+                : mode === 'login' && mfaStep
+                  ? t('login.mfaSubtitle')
+                  : mode === 'register'
+                    ? (!appConfig?.has_users ? t('login.createAdminHint') : t('login.createAccountHint'))
+                    : t('login.subtitle')}
             </p>
 
             <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -537,7 +568,39 @@ export default function LoginPage(): React.ReactElement {
                 </div>
               )}
 
-              {mode === 'login' && mfaStep && (
+              {passwordChangeStep && (
+                <>
+                  <div style={{ padding: '10px 14px', background: '#fefce8', border: '1px solid #fde68a', borderRadius: 10, fontSize: 13, color: '#92400e' }}>
+                    {t('settings.mustChangePassword')}
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#374151', marginBottom: 6 }}>{t('settings.newPassword')}</label>
+                    <div style={{ position: 'relative' }}>
+                      <Lock size={15} style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', pointerEvents: 'none' }} />
+                      <input
+                        type="password" value={newPassword} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewPassword(e.target.value)} required
+                        placeholder={t('settings.newPassword')} style={inputBase}
+                        onFocus={(e: React.FocusEvent<HTMLInputElement>) => e.target.style.borderColor = '#111827'}
+                        onBlur={(e: React.FocusEvent<HTMLInputElement>) => e.target.style.borderColor = '#e5e7eb'}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#374151', marginBottom: 6 }}>{t('settings.confirmPassword')}</label>
+                    <div style={{ position: 'relative' }}>
+                      <Lock size={15} style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', pointerEvents: 'none' }} />
+                      <input
+                        type="password" value={confirmPassword} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setConfirmPassword(e.target.value)} required
+                        placeholder={t('settings.confirmPassword')} style={inputBase}
+                        onFocus={(e: React.FocusEvent<HTMLInputElement>) => e.target.style.borderColor = '#111827'}
+                        onBlur={(e: React.FocusEvent<HTMLInputElement>) => e.target.style.borderColor = '#e5e7eb'}
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {mode === 'login' && mfaStep && !passwordChangeStep && (
                 <div>
                   <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#374151', marginBottom: 6 }}>{t('login.mfaCodeLabel')}</label>
                   <div style={{ position: 'relative' }}>
@@ -567,7 +630,7 @@ export default function LoginPage(): React.ReactElement {
               )}
 
               {/* Username (register only) */}
-              {mode === 'register' && (
+              {mode === 'register' && !passwordChangeStep && (
                 <div>
                   <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#374151', marginBottom: 6 }}>{t('login.username')}</label>
                   <div style={{ position: 'relative' }}>
@@ -583,7 +646,7 @@ export default function LoginPage(): React.ReactElement {
               )}
 
               {/* Email */}
-              {!(mode === 'login' && mfaStep) && (
+              {!(mode === 'login' && mfaStep) && !passwordChangeStep && (
               <div>
                 <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#374151', marginBottom: 6 }}>{t('common.email')}</label>
                 <div style={{ position: 'relative' }}>
@@ -599,7 +662,7 @@ export default function LoginPage(): React.ReactElement {
               )}
 
               {/* Password */}
-              {!(mode === 'login' && mfaStep) && (
+              {!(mode === 'login' && mfaStep) && !passwordChangeStep && (
               <div>
                 <label style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#374151', marginBottom: 6 }}>{t('common.password')}</label>
                 <div style={{ position: 'relative' }}>
@@ -630,14 +693,14 @@ export default function LoginPage(): React.ReactElement {
                 onMouseLeave={(e: React.MouseEvent<HTMLButtonElement>) => e.currentTarget.style.background = '#111827'}
               >
                 {isLoading
-                  ? <><div style={{ width: 15, height: 15, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: 'white', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />{mode === 'register' ? t('login.creating') : (mode === 'login' && mfaStep ? t('login.mfaVerify') : t('login.signingIn'))}</>
-                  : <><Plane size={16} />{mode === 'register' ? t('login.createAccount') : (mode === 'login' && mfaStep ? t('login.mfaVerify') : t('login.signIn'))}</>
+                  ? <><div style={{ width: 15, height: 15, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: 'white', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />{passwordChangeStep ? t('settings.updatePassword') : mode === 'register' ? t('login.creating') : (mode === 'login' && mfaStep ? t('login.mfaVerify') : t('login.signingIn'))}</>
+                  : <><Plane size={16} />{passwordChangeStep ? t('settings.updatePassword') : mode === 'register' ? t('login.createAccount') : (mode === 'login' && mfaStep ? t('login.mfaVerify') : t('login.signIn'))}</>
                 }
               </button>
             </form>
 
             {/* Toggle login/register */}
-            {showRegisterOption && appConfig?.has_users && !appConfig?.demo_mode && (
+            {showRegisterOption && appConfig?.has_users && !appConfig?.demo_mode && !passwordChangeStep && (
               <p style={{ textAlign: 'center', marginTop: 16, fontSize: 13, color: '#9ca3af' }}>
                 {mode === 'login' ? t('login.noAccount') + ' ' : t('login.hasAccount') + ' '}
                 <button onClick={() => { setMode(m => m === 'login' ? 'register' : 'login'); setError(''); setMfaStep(false); setMfaToken(''); setMfaCode('') }}

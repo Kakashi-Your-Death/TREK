@@ -428,8 +428,13 @@ function runMigrations(db: Database.Database): void {
       } catch {}
     },
     () => {
-      // GPX full route geometry stored as JSON array of [lat,lng] pairs
       try { db.exec('ALTER TABLE places ADD COLUMN route_geometry TEXT'); } catch {}
+    },
+    () => {
+      try { db.exec('ALTER TABLE users ADD COLUMN must_change_password INTEGER DEFAULT 0'); } catch {}
+    },
+    () => {
+      try { db.exec('ALTER TABLE trips ADD COLUMN reminder_days INTEGER DEFAULT 3'); } catch {}
     },
   ];
 

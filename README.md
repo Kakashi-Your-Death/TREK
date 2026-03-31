@@ -120,20 +120,36 @@ services:
   app:
     image: mauriceboe/trek:latest
     container_name: trek
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+    tmpfs:
+      - /tmp:noexec,nosuid,size=64m
     ports:
       - "3000:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
-      # - OIDC_ISSUER=https://auth.example.com
-      # - OIDC_CLIENT_ID=trek
-      # - OIDC_CLIENT_SECRET=supersecret
-      # - OIDC_DISPLAY_NAME="SSO"
-      # - OIDC_ONLY=true          # disable password auth entirely
+      - JWT_SECRET=${JWT_SECRET:-} # Auto-generated if not set; persist across restarts for stable sessions
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-} # Comma-separated origins for CORS and email notification links
+      - TZ=${TZ:-UTC} # Timezone for logs, reminders and scheduled tasks (e.g. Europe/Berlin)
+      - LOG_LEVEL=${LOG_LEVEL:-info} # info = concise user actions; debug = verbose admin-level details
     volumes:
       - ./data:/app/data
       - ./uploads:/app/uploads
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
 ```
 
 ```bash
@@ -226,17 +242,23 @@ trek.yourdomain.com {
 
 | Variable | Description | Default |
 |----------|-------------|---------|
+| **Core** | | |
 | `PORT` | Server port | `3000` |
-| `NODE_ENV` | Environment | `production` |
-| `JWT_SECRET` | JWT signing secret | Auto-generated |
-| `FORCE_HTTPS` | Redirect HTTP to HTTPS | `false` |
-| `OIDC_ISSUER` | OIDC provider URL | — |
+| `NODE_ENV` | Environment (`production` / `development`) | `production` |
+| `JWT_SECRET` | JWT signing secret; auto-generated and saved to `data/` if not set | Auto-generated |
+| `TZ` | Timezone for logs, reminders and cron jobs (e.g. `Europe/Berlin`) | `UTC` |
+| `LOG_LEVEL` | `info` = concise user actions, `debug` = verbose details | `info` |
+| `ALLOWED_ORIGINS` | Comma-separated origins for CORS and email links | same-origin |
+| `FORCE_HTTPS` | Redirect HTTP to HTTPS behind a TLS-terminating proxy | `false` |
+| `TRUST_PROXY` | Number of trusted reverse proxies for `X-Forwarded-For` | `1` |
+| **OIDC / SSO** | | |
+| `OIDC_ISSUER` | OpenID Connect provider URL | — |
 | `OIDC_CLIENT_ID` | OIDC client ID | — |
 | `OIDC_CLIENT_SECRET` | OIDC client secret | — |
-| `OIDC_DISPLAY_NAME` | SSO button label | `SSO` |
-| `OIDC_ONLY` | Disable password auth | `false` |
-| `TRUST_PROXY` | Trust proxy headers | `1` |
-| `DEMO_MODE` | Enable demo mode | `false` |
+| `OIDC_DISPLAY_NAME` | Label shown on the SSO login button | `SSO` |
+| `OIDC_ONLY` | Disable local password auth entirely (first SSO login becomes admin) | `false` |
+| **Other** | | |
+| `DEMO_MODE` | Enable demo mode (hourly data resets) | `false` |
 
 ## Optional API Keys
 
@@ -261,6 +283,7 @@ docker build -t trek .
 
 - **Database**: SQLite, stored in `./data/travel.db`
 - **Uploads**: Stored in `./uploads/`
+- **Logs**: `./data/logs/trek.log` (auto-rotated)
 - **Backups**: Create and restore via Admin Panel
 - **Auto-Backups**: Configurable schedule and retention in Admin Panel
 

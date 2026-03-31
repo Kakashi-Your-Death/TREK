@@ -285,7 +285,7 @@ router.put('/category-assignees/:categoryName', authenticate, (req: Request, res
       const tripInfo = db.prepare('SELECT title FROM trips WHERE id = ?').get(tripId) as { title: string } | undefined;
       for (const uid of user_ids) {
         if (uid !== authReq.user.id) {
-          notify({ userId: uid, event: 'packing_tagged', params: { trip: tripInfo?.title || 'Untitled', actor: authReq.user.username, category: cat } }).catch(() => {});
+          notify({ userId: uid, event: 'packing_tagged', params: { trip: tripInfo?.title || 'Untitled', actor: authReq.user.email, category: cat } }).catch(() => {});
         }
       }
     });

@@ -26,6 +26,7 @@ interface AuthState {
   serverTimezone: string
   /** Server policy: all users must enable MFA */
   appRequireMfa: boolean
+  tripRemindersEnabled: boolean
 
   login: (email: string, password: string) => Promise<LoginResult>
   completeMfaLogin: (mfaToken: string, code: string) => Promise<AuthResponse>
@@ -42,6 +43,7 @@ interface AuthState {
   setHasMapsKey: (val: boolean) => void
   setServerTimezone: (tz: string) => void
   setAppRequireMfa: (val: boolean) => void
+  setTripRemindersEnabled: (val: boolean) => void
   demoLogin: () => Promise<AuthResponse>
 }
 
@@ -55,6 +57,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   hasMapsKey: false,
   serverTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   appRequireMfa: false,
+  tripRemindersEnabled: false,
 
   login: async (email: string, password: string) => {
     set({ isLoading: true, error: null })
@@ -224,6 +227,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   setHasMapsKey: (val: boolean) => set({ hasMapsKey: val }),
   setServerTimezone: (tz: string) => set({ serverTimezone: tz }),
   setAppRequireMfa: (val: boolean) => set({ appRequireMfa: val }),
+  setTripRemindersEnabled: (val: boolean) => set({ tripRemindersEnabled: val }),
 
   demoLogin: async () => {
     set({ isLoading: true, error: null })

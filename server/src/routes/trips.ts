@@ -7,6 +7,7 @@ import { db, canAccessTrip, isOwner } from '../db/database';
 import { authenticate, demoUploadBlock } from '../middleware/auth';
 import { broadcast } from '../websocket';
 import { AuthRequest, Trip, User } from '../types';
+import { writeAudit, getClientIp, logInfo } from '../services/auditLog';
 
 const router = express.Router();
 
@@ -124,29 +125,42 @@ router.get('/', authenticate, (req: Request, res: Response) => {
   const authReq = req as AuthRequest;
   const archived = req.query.archived === '1' ? 1 : 0;
   const userId = authReq.user.id;
-  const trips = db.prepare(`
-    ${TRIP_SELECT}
-    LEFT JOIN trip_members m ON m.trip_id = t.id AND m.user_id = :userId
-    WHERE (t.user_id = :userId OR m.user_id IS NOT NULL) AND t.is_archived = :archived
-    ORDER BY t.created_at DESC
-  `).all({ userId, archived });
+  const isAdminUser = authReq.user.role === 'admin';
+  const trips = isAdminUser
+    ? db.prepare(`
+        ${TRIP_SELECT}
+        WHERE t.is_archived = :archived
+        ORDER BY t.created_at DESC
+      `).all({ userId, archived })
+    : db.prepare(`
+        ${TRIP_SELECT}
+        LEFT JOIN trip_members m ON m.trip_id = t.id AND m.user_id = :userId
+        WHERE (t.user_id = :userId OR m.user_id IS NOT NULL) AND t.is_archived = :archived
+        ORDER BY t.created_at DESC
+      `).all({ userId, archived });
   res.json({ trips });
 });
 
 router.post('/', authenticate, (req: Request, res: Response) => {
   const authReq = req as AuthRequest;
-  const { title, description, start_date, end_date, currency } = req.body;
+  const { title, description, start_date, end_date, currency, reminder_days } = req.body;
   if (!title) return res.status(400).json({ error: 'Title is required' });
   if (start_date && end_date && new Date(end_date) < new Date(start_date))
     return res.status(400).json({ error: 'End date must be after start date' });
 
+  const rd = reminder_days !== undefined ? (Number(reminder_days) >= 0 && Number(reminder_days) <= 30 ? Number(reminder_days) : 3) : 3;
+
   const result = db.prepare(`
-    INSERT INTO trips (user_id, title, description, start_date, end_date, currency)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(authReq.user.id, title, description || null, start_date || null, end_date || null, currency || 'EUR');
+    INSERT INTO trips (user_id, title, description, start_date, end_date, currency, reminder_days)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(authReq.user.id, title, description || null, start_date || null, end_date || null, currency || 'EUR', rd);
 
   const tripId = result.lastInsertRowid;
   generateDays(tripId, start_date, end_date);
+  writeAudit({ userId: authReq.user.id, action: 'trip.create', ip: getClientIp(req), details: { tripId: Number(tripId), title, reminder_days: rd === 0 ? 'none' : `${rd} days` } });
+  if (rd > 0) {
+    logInfo(`${authReq.user.email} set ${rd}-day reminder for trip "${title}"`);
+  }
   const trip = db.prepare(`${TRIP_SELECT} WHERE t.id = :tripId`).get({ userId: authReq.user.id, tripId });
   res.status(201).json({ trip });
 });
@@ -154,27 +168,26 @@ router.post('/', authenticate, (req: Request, res: Response) => {
 router.get('/:id', authenticate, (req: Request, res: Response) => {
   const authReq = req as AuthRequest;
   const userId = authReq.user.id;
-  const trip = db.prepare(`
-    ${TRIP_SELECT}
-    LEFT JOIN trip_members m ON m.trip_id = t.id AND m.user_id = :userId
-    WHERE t.id = :tripId AND (t.user_id = :userId OR m.user_id IS NOT NULL)
-  `).get({ userId, tripId: req.params.id });
+  const isAdminUser = authReq.user.role === 'admin';
+  const trip = isAdminUser
+    ? db.prepare(`${TRIP_SELECT} WHERE t.id = :tripId`).get({ userId, tripId: req.params.id })
+    : db.prepare(`
+        ${TRIP_SELECT}
+        LEFT JOIN trip_members m ON m.trip_id = t.id AND m.user_id = :userId
+        WHERE t.id = :tripId AND (t.user_id = :userId OR m.user_id IS NOT NULL)
+      `).get({ userId, tripId: req.params.id });
   if (!trip) return res.status(404).json({ error: 'Trip not found' });
   res.json({ trip });
 });
 
 router.put('/:id', authenticate, (req: Request, res: Response) => {
   const authReq = req as AuthRequest;
-  const access = canAccessTrip(req.params.id, authReq.user.id);
-  if (!access) return res.status(404).json({ error: 'Trip not found' });
-
-  const ownerOnly = req.body.is_archived !== undefined || req.body.cover_image !== undefined;
-  if (ownerOnly && !isOwner(req.params.id, authReq.user.id))
-    return res.status(403).json({ error: 'Only the owner can change this setting' });
+  if (!isOwner(req.params.id, authReq.user.id) && authReq.user.role !== 'admin')
+    return res.status(403).json({ error: 'Only the trip owner can edit trip details' });
 
   const trip = db.prepare('SELECT * FROM trips WHERE id = ?').get(req.params.id) as Trip | undefined;
   if (!trip) return res.status(404).json({ error: 'Trip not found' });
-  const { title, description, start_date, end_date, currency, is_archived, cover_image } = req.body;
+  const { title, description, start_date, end_date, currency, is_archived, cover_image, reminder_days } = req.body;
 
   if (start_date && end_date && new Date(end_date) < new Date(start_date))
     return res.status(400).json({ error: 'End date must be after start date' });
@@ -186,15 +199,40 @@ router.put('/:id', authenticate, (req: Request, res: Response) => {
   const newCurrency = currency || trip.currency;
   const newArchived = is_archived !== undefined ? (is_archived ? 1 : 0) : trip.is_archived;
   const newCover = cover_image !== undefined ? cover_image : trip.cover_image;
+  const newReminder = reminder_days !== undefined ? (Number(reminder_days) >= 0 && Number(reminder_days) <= 30 ? Number(reminder_days) : (trip as any).reminder_days) : (trip as any).reminder_days;
 
   db.prepare(`
     UPDATE trips SET title=?, description=?, start_date=?, end_date=?,
-      currency=?, is_archived=?, cover_image=?, updated_at=CURRENT_TIMESTAMP
+      currency=?, is_archived=?, cover_image=?, reminder_days=?, updated_at=CURRENT_TIMESTAMP
     WHERE id=?
-  `).run(newTitle, newDesc, newStart || null, newEnd || null, newCurrency, newArchived, newCover, req.params.id);
+  `).run(newTitle, newDesc, newStart || null, newEnd || null, newCurrency, newArchived, newCover, newReminder, req.params.id);
 
   if (newStart !== trip.start_date || newEnd !== trip.end_date)
     generateDays(req.params.id, newStart, newEnd);
+
+  const changes: Record<string, unknown> = {};
+  if (title && title !== trip.title) changes.title = title;
+  if (newStart !== trip.start_date) changes.start_date = newStart;
+  if (newEnd !== trip.end_date) changes.end_date = newEnd;
+  if (newReminder !== (trip as any).reminder_days) changes.reminder_days = newReminder === 0 ? 'none' : `${newReminder} days`;
+  if (is_archived !== undefined && newArchived !== trip.is_archived) changes.archived = !!newArchived;
+
+  const isAdminEdit = authReq.user.role === 'admin' && trip.user_id !== authReq.user.id;
+  if (Object.keys(changes).length > 0) {
+    const ownerEmail = isAdminEdit ? (db.prepare('SELECT email FROM users WHERE id = ?').get(trip.user_id) as { email: string } | undefined)?.email : undefined;
+    writeAudit({ userId: authReq.user.id, action: 'trip.update', ip: getClientIp(req), details: { tripId: Number(req.params.id), trip: newTitle, ...(ownerEmail ? { owner: ownerEmail } : {}), ...changes } });
+    if (isAdminEdit && ownerEmail) {
+      logInfo(`Admin ${authReq.user.email} edited trip "${newTitle}" owned by ${ownerEmail}`);
+    }
+  }
+
+  if (newReminder !== (trip as any).reminder_days) {
+    if (newReminder > 0) {
+      logInfo(`${authReq.user.email} set ${newReminder}-day reminder for trip "${newTitle}"`);
+    } else {
+      logInfo(`${authReq.user.email} removed reminder for trip "${newTitle}"`);
+    }
+  }
 
   const updatedTrip = db.prepare(`${TRIP_SELECT} WHERE t.id = :tripId`).get({ userId: authReq.user.id, tripId: req.params.id });
   res.json({ trip: updatedTrip });
@@ -226,9 +264,16 @@ router.post('/:id/cover', authenticate, demoUploadBlock, uploadCover.single('cov
 
 router.delete('/:id', authenticate, (req: Request, res: Response) => {
   const authReq = req as AuthRequest;
-  if (!isOwner(req.params.id, authReq.user.id))
+  if (!isOwner(req.params.id, authReq.user.id) && authReq.user.role !== 'admin')
     return res.status(403).json({ error: 'Only the owner can delete the trip' });
   const deletedTripId = Number(req.params.id);
+  const delTrip = db.prepare('SELECT title, user_id FROM trips WHERE id = ?').get(req.params.id) as { title: string; user_id: number } | undefined;
+  const isAdminDel = authReq.user.role === 'admin' && delTrip && delTrip.user_id !== authReq.user.id;
+  const ownerEmail = isAdminDel ? (db.prepare('SELECT email FROM users WHERE id = ?').get(delTrip!.user_id) as { email: string } | undefined)?.email : undefined;
+  writeAudit({ userId: authReq.user.id, action: 'trip.delete', ip: getClientIp(req), details: { tripId: deletedTripId, trip: delTrip?.title, ...(ownerEmail ? { owner: ownerEmail } : {}) } });
+  if (isAdminDel && ownerEmail) {
+    logInfo(`Admin ${authReq.user.email} deleted trip "${delTrip!.title}" owned by ${ownerEmail}`);
+  }
   db.prepare('DELETE FROM trips WHERE id = ?').run(req.params.id);
   res.json({ success: true });
   broadcast(deletedTripId, 'trip:deleted', { id: deletedTripId }, req.headers['x-socket-id'] as string);
@@ -287,7 +332,7 @@ router.post('/:id/members', authenticate, (req: Request, res: Response) => {
   // Notify invited user
   const tripInfo = db.prepare('SELECT title FROM trips WHERE id = ?').get(req.params.id) as { title: string } | undefined;
   import('../services/notifications').then(({ notify }) => {
-    notify({ userId: target.id, event: 'trip_invite', params: { trip: tripInfo?.title || 'Untitled', actor: authReq.user.username } }).catch(() => {});
+    notify({ userId: target.id, event: 'trip_invite', params: { trip: tripInfo?.title || 'Untitled', actor: authReq.user.email, invitee: target.email } }).catch(() => {});
   });
 
   res.status(201).json({ member: { ...target, role: 'member', avatar_url: target.avatar ? `/uploads/avatars/${target.avatar}` : null } });

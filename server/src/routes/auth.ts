@@ -18,6 +18,7 @@ import { revokeUserSessions } from '../mcp';
 import { AuthRequest, User } from '../types';
 import { writeAudit, getClientIp } from '../services/auditLog';
 import { decrypt_api_key, maybe_encrypt_api_key } from '../services/apiKeyCrypto';
+import { startTripReminders } from '../scheduler';
 
 authenticator.options = { window: 1 };
 
@@ -83,6 +84,7 @@ function stripUserForClient(user: User): Record<string, unknown> {
     updated_at: utcSuffix(rest.updated_at),
     last_login: utcSuffix(rest.last_login),
     mfa_enabled: !!(user.mfa_enabled === 1 || user.mfa_enabled === true),
+    must_change_password: !!(user.must_change_password === 1 || user.must_change_password === true),
   };
 }
 
@@ -183,9 +185,17 @@ router.get('/app-config', (_req: Request, res: Response) => {
   const oidcOnlySetting = process.env.OIDC_ONLY || (db.prepare("SELECT value FROM app_settings WHERE key = 'oidc_only'").get() as { value: string } | undefined)?.value;
   const oidcOnlyMode = oidcConfigured && oidcOnlySetting === 'true';
   const requireMfaRow = db.prepare("SELECT value FROM app_settings WHERE key = 'require_mfa'").get() as { value: string } | undefined;
+  const notifChannel = (db.prepare("SELECT value FROM app_settings WHERE key = 'notification_channel'").get() as { value: string } | undefined)?.value || 'none';
+  const tripReminderSetting = (db.prepare("SELECT value FROM app_settings WHERE key = 'notify_trip_reminder'").get() as { value: string } | undefined)?.value;
+  const hasSmtpHost = !!(process.env.SMTP_HOST || (db.prepare("SELECT value FROM app_settings WHERE key = 'smtp_host'").get() as { value: string } | undefined)?.value);
+  const hasWebhookUrl = !!(process.env.NOTIFICATION_WEBHOOK_URL || (db.prepare("SELECT value FROM app_settings WHERE key = 'notification_webhook_url'").get() as { value: string } | undefined)?.value);
+  const channelConfigured = (notifChannel === 'email' && hasSmtpHost) || (notifChannel === 'webhook' && hasWebhookUrl);
+  const tripRemindersEnabled = channelConfigured && tripReminderSetting !== 'false';
+  const setupComplete = userCount > 0 && !(db.prepare("SELECT id FROM users WHERE role = 'admin' AND must_change_password = 1 LIMIT 1").get());
   res.json({
     allow_registration: isDemo ? false : allowRegistration,
     has_users: userCount > 0,
+    setup_complete: setupComplete,
     version,
     has_maps_key: hasGoogleKey,
     oidc_configured: oidcConfigured,
@@ -197,6 +207,8 @@ router.get('/app-config', (_req: Request, res: Response) => {
     demo_email: isDemo ? 'demo@trek.app' : undefined,
     demo_password: isDemo ? 'demo12345' : undefined,
     timezone: process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+    notification_channel: notifChannel,
+    trip_reminders_enabled: tripRemindersEnabled,
   });
 });
 
@@ -290,6 +302,7 @@ router.post('/register', authLimiter, (req: Request, res: Response) => {
       }
     }
 
+    writeAudit({ userId: Number(result.lastInsertRowid), action: 'user.register', ip: getClientIp(req), details: { username, email, role } });
     res.status(201).json({ token, user: { ...user, avatar_url: null } });
   } catch (err: unknown) {
     res.status(500).json({ error: 'Error creating user' });
@@ -309,11 +322,13 @@ router.post('/login', authLimiter, (req: Request, res: Response) => {
 
   const user = db.prepare('SELECT * FROM users WHERE LOWER(email) = LOWER(?)').get(email) as User | undefined;
   if (!user) {
+    writeAudit({ userId: null, action: 'user.login_failed', ip: getClientIp(req), details: { email, reason: 'unknown_email' } });
     return res.status(401).json({ error: 'Invalid email or password' });
   }
 
   const validPassword = bcrypt.compareSync(password, user.password_hash!);
   if (!validPassword) {
+    writeAudit({ userId: Number(user.id), action: 'user.login_failed', ip: getClientIp(req), details: { email, reason: 'wrong_password' } });
     return res.status(401).json({ error: 'Invalid email or password' });
   }
 
@@ -330,13 +345,14 @@ router.post('/login', authLimiter, (req: Request, res: Response) => {
   const token = generateToken(user);
   const userSafe = stripUserForClient(user) as Record<string, unknown>;
 
+  writeAudit({ userId: Number(user.id), action: 'user.login', ip: getClientIp(req), details: { email } });
   res.json({ token, user: { ...userSafe, avatar_url: avatarUrl(user) } });
 });
 
 router.get('/me', authenticate, (req: Request, res: Response) => {
   const authReq = req as AuthRequest;
   const user = db.prepare(
-    'SELECT id, username, email, role, avatar, oidc_issuer, created_at, mfa_enabled FROM users WHERE id = ?'
+    'SELECT id, username, email, role, avatar, oidc_issuer, created_at, mfa_enabled, must_change_password FROM users WHERE id = ?'
   ).get(authReq.user.id) as User | undefined;
 
   if (!user) {
@@ -370,7 +386,8 @@ router.put('/me/password', authenticate, rateLimiter(5, RATE_LIMIT_WINDOW), (req
   }
 
   const hash = bcrypt.hashSync(new_password, 12);
-  db.prepare('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(hash, authReq.user.id);
+  db.prepare('UPDATE users SET password_hash = ?, must_change_password = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(hash, authReq.user.id);
+  writeAudit({ userId: authReq.user.id, action: 'user.password_change', ip: getClientIp(req) });
   res.json({ success: true });
 });
 
@@ -385,6 +402,7 @@ router.delete('/me', authenticate, (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Cannot delete the last admin account' });
     }
   }
+  writeAudit({ userId: authReq.user.id, action: 'user.account_delete', ip: getClientIp(req) });
   db.prepare('DELETE FROM users WHERE id = ?').run(authReq.user.id);
   res.json({ success: true });
 });
@@ -606,7 +624,7 @@ router.get('/validate-keys', authenticate, async (req: Request, res: Response) =
   res.json(result);
 });
 
-const ADMIN_SETTINGS_KEYS = ['allow_registration', 'allowed_file_types', 'require_mfa', 'smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass', 'smtp_from', 'smtp_skip_tls_verify', 'notification_webhook_url', 'app_url'];
+const ADMIN_SETTINGS_KEYS = ['allow_registration', 'allowed_file_types', 'require_mfa', 'smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass', 'smtp_from', 'smtp_skip_tls_verify', 'notification_webhook_url', 'notification_channel', 'notify_trip_invite', 'notify_booking_change', 'notify_trip_reminder', 'notify_vacay_invite', 'notify_photos_shared', 'notify_collab_message', 'notify_packing_tagged'];
 
 router.get('/app-settings', authenticate, (req: Request, res: Response) => {
   const authReq = req as AuthRequest;
@@ -626,7 +644,7 @@ router.put('/app-settings', authenticate, (req: Request, res: Response) => {
   const user = db.prepare('SELECT role FROM users WHERE id = ?').get(authReq.user.id) as { role: string } | undefined;
   if (user?.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
 
-  const { allow_registration, allowed_file_types, require_mfa } = req.body as Record<string, unknown>;
+  const { require_mfa } = req.body as Record<string, unknown>;
 
   if (require_mfa === true || require_mfa === 'true') {
     const adminMfa = db.prepare('SELECT mfa_enabled FROM users WHERE id = ?').get(authReq.user.id) as { mfa_enabled: number } | undefined;
@@ -648,16 +666,37 @@ router.put('/app-settings', authenticate, (req: Request, res: Response) => {
       db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)").run(key, val);
     }
   }
+  const changedKeys = ADMIN_SETTINGS_KEYS.filter(k => req.body[k] !== undefined && !(k === 'smtp_pass' && String(req.body[k]) === '••••••••'));
+
+  const summary: Record<string, unknown> = {};
+  const smtpChanged = changedKeys.some(k => k.startsWith('smtp_'));
+  const eventsChanged = changedKeys.some(k => k.startsWith('notify_'));
+  if (changedKeys.includes('notification_channel')) summary.notification_channel = req.body.notification_channel;
+  if (changedKeys.includes('notification_webhook_url')) summary.webhook_url_updated = true;
+  if (smtpChanged) summary.smtp_settings_updated = true;
+  if (eventsChanged) summary.notification_events_updated = true;
+  if (changedKeys.includes('allow_registration')) summary.allow_registration = req.body.allow_registration;
+  if (changedKeys.includes('allowed_file_types')) summary.allowed_file_types_updated = true;
+  if (changedKeys.includes('require_mfa')) summary.require_mfa = req.body.require_mfa;
+
+  const debugDetails: Record<string, unknown> = {};
+  for (const k of changedKeys) {
+    debugDetails[k] = k === 'smtp_pass' ? '***' : req.body[k];
+  }
+
   writeAudit({
     userId: authReq.user.id,
     action: 'settings.app_update',
     ip: getClientIp(req),
-    details: {
-      allow_registration: allow_registration !== undefined ? Boolean(allow_registration) : undefined,
-      allowed_file_types_changed: allowed_file_types !== undefined,
-      require_mfa: require_mfa !== undefined ? (require_mfa === true || require_mfa === 'true') : undefined,
-    },
+    details: summary,
+    debugDetails,
   });
+
+  const notifRelated = ['notification_channel', 'notification_webhook_url', 'smtp_host', 'notify_trip_reminder'];
+  if (changedKeys.some(k => notifRelated.includes(k))) {
+    startTripReminders();
+  }
+
   res.json({ success: true });
 });
 
@@ -768,6 +807,7 @@ router.post('/mfa/verify-login', authLimiter, (req: Request, res: Response) => {
     db.prepare('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?').run(user.id);
     const sessionToken = generateToken(user);
     const userSafe = stripUserForClient(user) as Record<string, unknown>;
+    writeAudit({ userId: Number(user.id), action: 'user.login', ip: getClientIp(req), details: { mfa: true } });
     res.json({ token: sessionToken, user: { ...userSafe, avatar_url: avatarUrl(user) } });
   } catch {
     return res.status(401).json({ error: 'Invalid or expired verification token' });

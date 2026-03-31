@@ -316,6 +316,7 @@ export const notificationsApi = {
   getPreferences: () => apiClient.get('/notifications/preferences').then(r => r.data),
   updatePreferences: (prefs: Record<string, boolean>) => apiClient.put('/notifications/preferences', prefs).then(r => r.data),
   testSmtp: (email?: string) => apiClient.post('/notifications/test-smtp', { email }).then(r => r.data),
+  testWebhook: () => apiClient.post('/notifications/test-webhook').then(r => r.data),
 }
 
 export default apiClient

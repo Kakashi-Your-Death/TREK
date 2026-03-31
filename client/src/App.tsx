@@ -71,18 +71,19 @@ function RootRedirect() {
 }
 
 export default function App() {
-  const { loadUser, token, isAuthenticated, demoMode, setDemoMode, setHasMapsKey, setServerTimezone, setAppRequireMfa } = useAuthStore()
+  const { loadUser, token, isAuthenticated, demoMode, setDemoMode, setHasMapsKey, setServerTimezone, setAppRequireMfa, setTripRemindersEnabled } = useAuthStore()
   const { loadSettings } = useSettingsStore()
 
   useEffect(() => {
     if (token) {
       loadUser()
     }
-    authApi.getAppConfig().then(async (config: { demo_mode?: boolean; has_maps_key?: boolean; version?: string; timezone?: string; require_mfa?: boolean }) => {
+    authApi.getAppConfig().then(async (config: { demo_mode?: boolean; has_maps_key?: boolean; version?: string; timezone?: string; require_mfa?: boolean; trip_reminders_enabled?: boolean }) => {
       if (config?.demo_mode) setDemoMode(true)
       if (config?.has_maps_key !== undefined) setHasMapsKey(config.has_maps_key)
       if (config?.timezone) setServerTimezone(config.timezone)
       if (config?.require_mfa !== undefined) setAppRequireMfa(!!config.require_mfa)
+      if (config?.trip_reminders_enabled !== undefined) setTripRemindersEnabled(config.trip_reminders_enabled)
 
       if (config?.version) {
         const storedVersion = localStorage.getItem('trek_app_version')
