@@ -10,6 +10,7 @@ import { writeAudit, getClientIp, logInfo } from '../services/auditLog';
 import { getAllPermissions, savePermissions, PERMISSION_ACTIONS } from '../services/permissions';
 import { revokeUserSessions } from '../mcp';
 import { maybe_encrypt_api_key, decrypt_api_key } from '../services/apiKeyCrypto';
+import { updateJwtSecret } from '../config';
 
 const router = express.Router();
 
@@ -556,6 +557,30 @@ router.delete('/mcp-tokens/:id', (req: Request, res: Response) => {
   if (!token) return res.status(404).json({ error: 'Token not found' });
   db.prepare('DELETE FROM mcp_tokens WHERE id = ?').run(req.params.id);
   revokeUserSessions(token.user_id);
+  res.json({ success: true });
+});
+
+router.post('/rotate-jwt-secret', (req: Request, res: Response) => {
+  const authReq = req as AuthRequest;
+  const newSecret = crypto.randomBytes(32).toString('hex');
+  const dataDir = path.resolve(__dirname, '../../data');
+  const secretFile = path.join(dataDir, '.jwt_secret');
+  try {
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    fs.writeFileSync(secretFile, newSecret, { mode: 0o600 });
+  } catch (err: unknown) {
+    return res.status(500).json({ error: 'Failed to persist new JWT secret to disk' });
+  }
+  updateJwtSecret(newSecret);
+  writeAudit({
+    user_id: authReq.user?.id ?? null,
+    username: authReq.user?.username ?? 'unknown',
+    action: 'admin.rotate_jwt_secret',
+    target_type: 'system',
+    target_id: null,
+    details: null,
+    ip: getClientIp(req),
+  });
   res.json({ success: true });
 });
 

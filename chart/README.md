@@ -29,5 +29,6 @@ See `values.yaml` for more options.
 ## Notes
 - Ingress is off by default. Enable and configure hosts for your domain.
 - PVCs require a default StorageClass or specify one as needed.
-- JWT_SECRET must be set for production use.
+- `JWT_SECRET` should be set for production use; auto-generated and persisted to the data PVC if not provided.
+- `ENCRYPTION_KEY` encrypts stored secrets (API keys, MFA, SMTP, OIDC) at rest. Auto-generated and persisted to the data PVC if not provided. **Upgrading:** if a previous version used `JWT_SECRET`-derived encryption, set `secretEnv.ENCRYPTION_KEY` to your old `JWT_SECRET` value to keep existing encrypted data readable, then re-save credentials via the admin panel.
 - If using ingress, you must manually keep `env.ALLOWED_ORIGINS` and `ingress.hosts` in sync to ensure CORS works correctly. The chart does not sync these automatically.

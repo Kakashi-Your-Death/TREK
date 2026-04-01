@@ -41,6 +41,12 @@ spec:
                 secretKeyRef:
                   name: {{ default (printf "%s-secret" (include "trek.fullname" .)) .Values.existingSecret }}
                   key: {{ .Values.existingSecretKey | default "JWT_SECRET" }}
+            - name: ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default (printf "%s-secret" (include "trek.fullname" .)) .Values.existingSecret }}
+                  key: ENCRYPTION_KEY
+                  optional: true
           volumeMounts:
             - name: data
               mountPath: /app/data

@@ -16,7 +16,7 @@ import PackingTemplateManager from '../components/Admin/PackingTemplateManager'
 import AuditLogPanel from '../components/Admin/AuditLogPanel'
 import AdminMcpTokensPanel from '../components/Admin/AdminMcpTokensPanel'
 import PermissionsPanel from '../components/Admin/PermissionsPanel'
-import { Users, Map, Briefcase, Shield, Trash2, Edit2, Camera, FileText, Eye, EyeOff, Save, CheckCircle, XCircle, Loader2, UserPlus, ArrowUpCircle, ExternalLink, Download, GitBranch, Sun, Link2, Copy, Plus } from 'lucide-react'
+import { Users, Map, Briefcase, Shield, Trash2, Edit2, Camera, FileText, Eye, EyeOff, Save, CheckCircle, XCircle, Loader2, UserPlus, ArrowUpCircle, ExternalLink, Download, GitBranch, Sun, Link2, Copy, Plus, RefreshCw, AlertTriangle } from 'lucide-react'
 import CustomSelect from '../components/shared/CustomSelect'
 
 interface AdminUser {
@@ -123,9 +123,12 @@ export default function AdminPage(): React.ReactElement {
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
   const [showUpdateModal, setShowUpdateModal] = useState<boolean>(false)
 
-  const { user: currentUser, updateApiKeys, setAppRequireMfa, setTripRemindersEnabled } = useAuthStore()
+  const { user: currentUser, updateApiKeys, setAppRequireMfa, setTripRemindersEnabled, logout } = useAuthStore()
   const navigate = useNavigate()
   const toast = useToast()
+
+  const [showRotateJwtModal, setShowRotateJwtModal] = useState<boolean>(false)
+  const [rotatingJwt, setRotatingJwt] = useState<boolean>(false)
 
   useEffect(() => {
     loadData()
@@ -1132,6 +1135,31 @@ export default function AdminPage(): React.ReactElement {
                   </div>
                 </div>
               </div>
+
+              {/* Danger Zone */}
+              <div className="bg-white rounded-xl border border-red-200 overflow-hidden">
+                <div className="px-6 py-4 border-b border-red-100 bg-red-50">
+                  <h2 className="font-semibold text-red-700 flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4" />
+                    Danger Zone
+                  </h2>
+                </div>
+                <div className="p-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-slate-700">Rotate JWT Secret</p>
+                      <p className="text-xs text-slate-400 mt-0.5">Generate a new JWT signing secret. All active sessions will be invalidated immediately.</p>
+                    </div>
+                    <button
+                      onClick={() => setShowRotateJwtModal(true)}
+                      className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium transition-colors"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                      Rotate
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 
@@ -1361,6 +1389,54 @@ docker run -d --name nomad \\
           </div>
         </div>
       )}
+
+      {/* Rotate JWT Secret confirmation modal */}
+      <Modal
+        isOpen={showRotateJwtModal}
+        onClose={() => setShowRotateJwtModal(false)}
+        title="Rotate JWT Secret"
+        size="sm"
+        footer={
+          <div className="flex gap-3 justify-end">
+            <button
+              onClick={() => setShowRotateJwtModal(false)}
+              disabled={rotatingJwt}
+              className="px-4 py-2 text-sm text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-50"
+            >
+              {t('common.cancel')}
+            </button>
+            <button
+              onClick={async () => {
+                setRotatingJwt(true)
+                try {
+                  await adminApi.rotateJwtSecret()
+                  setShowRotateJwtModal(false)
+                  logout()
+                  navigate('/login')
+                } catch {
+                  toast.error(t('common.error'))
+                  setRotatingJwt(false)
+                }
+              }}
+              disabled={rotatingJwt}
+              className="flex items-center gap-2 px-4 py-2 text-sm bg-red-600 hover:bg-red-700 disabled:bg-red-300 text-white rounded-lg font-medium"
+            >
+              {rotatingJwt ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+              Rotate &amp; Log out
+            </button>
+          </div>
+        }
+      >
+        <div className="flex gap-3">
+          <div className="flex-shrink-0 w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+            <AlertTriangle className="w-5 h-5 text-red-600" />
+          </div>
+          <div>
+            <p className="text-sm font-medium text-slate-900 mb-1">Warning, this will invalidate all sessions and log you out.</p>
+            <p className="text-xs text-slate-500">A new JWT secret will be generated immediately. Every logged-in user — including you — will be signed out and will need to log in again.</p>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }

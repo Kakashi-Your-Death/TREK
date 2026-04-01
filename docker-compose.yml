@@ -19,6 +19,7 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - JWT_SECRET=${JWT_SECRET:-} # Auto-generated if not set; persist across restarts for stable sessions
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-} # Auto-generated if not set. If upgrading, set to your old JWT_SECRET value to keep existing encrypted secrets readable.
       - TZ=${TZ:-UTC} # Timezone for logs, reminders and scheduled tasks (e.g. Europe/Berlin)
       - LOG_LEVEL=${LOG_LEVEL:-info} # info = concise user actions; debug = verbose admin-level details
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-} # Comma-separated origins for CORS and email notification links

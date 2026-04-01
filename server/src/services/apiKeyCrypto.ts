@@ -1,10 +1,10 @@
 import * as crypto from 'crypto';
-import { JWT_SECRET } from '../config';
+import { ENCRYPTION_KEY } from '../config';
 
 const ENCRYPTED_PREFIX = 'enc:v1:';
 
 function get_key() {
-  return crypto.createHash('sha256').update(`${JWT_SECRET}:api_keys:v1`).digest();
+  return crypto.createHash('sha256').update(`${ENCRYPTION_KEY}:api_keys:v1`).digest();
 }
 
 export function encrypt_api_key(plain: unknown) {
