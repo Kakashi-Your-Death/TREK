@@ -80,6 +80,7 @@ const nl: Record<string, string> = {
   'dashboard.sharedBy': 'Gedeeld door {name}',
   'dashboard.days': 'Dagen',
   'dashboard.places': 'Plaatsen',
+  'dashboard.members': 'Reisgenoten',
   'dashboard.archive': 'Archiveren',
   'dashboard.restore': 'Herstellen',
   'dashboard.archived': 'Gearchiveerd',

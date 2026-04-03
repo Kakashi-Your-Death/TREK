@@ -80,6 +80,7 @@ const br: Record<string, string | { name: string; category: string }[]> = {
   'dashboard.sharedBy': 'Compartilhada por {name}',
   'dashboard.days': 'Dias',
   'dashboard.places': 'Lugares',
+  'dashboard.members': 'Parceiros de viagem',
   'dashboard.archive': 'Arquivar',
   'dashboard.restore': 'Restaurar',
   'dashboard.archived': 'Arquivada',

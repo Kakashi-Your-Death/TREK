@@ -85,6 +85,7 @@ const ar: Record<string, string | { name: string; category: string }[]> = {
   'dashboard.sharedBy': 'شاركها {name}',
   'dashboard.days': 'الأيام',
   'dashboard.places': 'الأماكن',
+  'dashboard.members': 'ال חברים',
   'dashboard.archive': 'أرشفة',
   'dashboard.restore': 'استعادة',
   'dashboard.archived': 'مؤرشفة',

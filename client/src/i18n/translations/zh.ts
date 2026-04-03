@@ -80,6 +80,7 @@ const zh: Record<string, string> = {
   'dashboard.sharedBy': '由 {name} 分享',
   'dashboard.days': '天',
   'dashboard.places': '地点',
+  'dashboard.members': '旅伴',
   'dashboard.archive': '归档',
   'dashboard.restore': '恢复',
   'dashboard.archived': '已归档',

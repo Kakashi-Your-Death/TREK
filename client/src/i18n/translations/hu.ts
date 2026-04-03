@@ -80,6 +80,7 @@ const hu: Record<string, string | { name: string; category: string }[]> = {
   'dashboard.sharedBy': 'Megosztotta: {name}',
   'dashboard.days': 'nap',
   'dashboard.places': 'hely',
+  'dashboard.members': 'Útitársak',
   'dashboard.archive': 'Archiválás',
   'dashboard.restore': 'Visszaállítás',
   'dashboard.archived': 'Archivált',

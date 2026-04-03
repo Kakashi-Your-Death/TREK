@@ -14,7 +14,7 @@ import ConfirmDialog from '../components/shared/ConfirmDialog'
 import { useToast } from '../components/shared/Toast'
 import {
   Plus, Calendar, Trash2, Edit2, Map, ChevronDown, ChevronUp,
-  Archive, ArchiveRestore, Clock, MapPin, Settings, X, ArrowRightLeft,
+  Archive, ArchiveRestore, Clock, MapPin, Settings, X, ArrowRightLeft, Users,
   LayoutGrid, List,
 } from 'lucide-react'
 import { useCanDo } from '../store/permissionsStore'
@@ -31,6 +31,7 @@ interface DashboardTrip {
   owner_username?: string
   day_count?: number
   place_count?: number
+  shared_count?: number
   [key: string]: string | number | boolean | null | undefined
 }
 
@@ -224,6 +225,9 @@ function SpotlightCard({ trip, onEdit, onDelete, onArchive, onClick, t, locale, 
             <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'rgba(255,255,255,0.8)', fontSize: 13 }}>
               <MapPin size={13} /> {trip.place_count || 0} {t('dashboard.places')}
             </div>
+            <div className="hidden md:flex" style={{ alignItems: 'center', gap: 5, color: 'rgba(255,255,255,0.8)', fontSize: 13 }}>
+              <Users size={13} /> {trip.shared_count+1 || 0} {t('dashboard.members')}
+            </div>
           </div>
         </div>
       </div>
@@ -307,6 +311,7 @@ function TripCard({ trip, onEdit, onDelete, onArchive, onClick, t, locale }: Omi
         <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
           <Stat label={t('dashboard.days')} value={trip.day_count || 0} />
           <Stat label={t('dashboard.places')} value={trip.place_count || 0} />
+          <Stat label={t('dashboard.members')} value={trip.shared_count+1 || 0} />
         </div>
 
         {(onEdit || onArchive || onDelete) && (
@@ -405,6 +410,9 @@ function TripListItem({ trip, onEdit, onDelete, onArchive, onClick, t, locale }:
         </div>
         <div className="hidden md:flex" style={{ alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--text-muted)' }}>
           <MapPin size={11} /> {trip.place_count || 0}
+        </div>
+        <div className="hidden md:flex" style={{ alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--text-muted)' }}>
+          <Users size={11} /> {trip.shared_count+1 || 0}
         </div>
       </div>
 

@@ -80,6 +80,7 @@ const ru: Record<string, string> = {
   'dashboard.sharedBy': 'Поделился {name}',
   'dashboard.days': 'Дни',
   'dashboard.places': 'Места',
+  'dashboard.members': 'Попутчики',
   'dashboard.archive': 'Архивировать',
   'dashboard.restore': 'Восстановить',
   'dashboard.archived': 'В архиве',

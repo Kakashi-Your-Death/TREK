@@ -81,6 +81,7 @@ const es: Record<string, string> = {
   'dashboard.sharedBy': 'Compartido por {name}',
   'dashboard.days': 'Días',
   'dashboard.places': 'Lugares',
+  'dashboard.members': 'Compañeros de viaje',
   'dashboard.archive': 'Archivar',
   'dashboard.restore': 'Restaurar',
   'dashboard.archived': 'Archivado',

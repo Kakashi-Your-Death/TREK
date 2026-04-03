@@ -81,6 +81,7 @@ const cs: Record<string, string | { name: string; category: string }[]> = {
   'dashboard.sharedBy': 'Sdílí {name}',
   'dashboard.days': 'Dní',
   'dashboard.places': 'Míst',
+  'dashboard.members': 'Cestovní parťáci',
   'dashboard.archive': 'Archivovat',
   'dashboard.restore': 'Obnovit',
   'dashboard.archived': 'Archivováno',
